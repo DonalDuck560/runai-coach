@@ -1,0 +1,8 @@
+{
+  "name": "RunAI Coach 3.5 PRO",
+  "short_name": "RunAI",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#000000"
+}

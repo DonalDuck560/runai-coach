@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RunAI Coach 3.5 PRO</title>
+
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#000000">
+<link rel="apple-touch-icon" href="icon.png">
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<style>
+body {
+    margin:0;
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background:#f5f5f7;
+}
+
+.container {
+    max-width: 700px;
+    margin:auto;
+    padding: 16px;
+}
+
+.card {
+    background:white;
+    padding:15px;
+    margin:12px 0;
+    border-radius:14px;
+    border:1px solid #e5e5e5;
+}
+
+input, button {
+    width:100%;
+    padding:10px;
+    margin-top:8px;
+    border-radius:10px;
+    border:1px solid #ddd;
+    font-size:15px;
+}
+
+button {
+    background:black;
+    color:white;
+    border:none;
+    font-weight:600;
+    cursor:pointer;
+}
+
+button:hover { opacity:0.85; }
+
+.stats {
+    display:flex;
+    justify-content:space-between;
+    text-align:center;
+}
+
+.stats div {
+    flex:1;
+}
+
+h3 { margin:0; }
+
+#ai {
+    white-space:pre-wrap;
+    margin-top:12px;
+    font-size:14px;
+    line-height:1.5;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+<h2>🏃 RunAI Coach 3.5 PRO</h2>
+
+<div class="card">
+    <input type="date" id="date">
+    <input type="number" id="dist" placeholder="Distanz (km)">
+    <input type="number" id="time" placeholder="Zeit (min)">
+    <button onclick="addRun()">Speichern</button>
+</div>
+
+<div class="card">
+    <h3>Stats</h3>
+    <div class="stats">
+        <div>
+            <h3 id="total">0</h3>
+            <p>Total km</p>
+        </div>
+        <div>
+            <h3 id="avg">0</h3>
+            <p>Ø km</p>
+        </div>
+        <div>
+            <h3 id="week">0</h3>
+            <p>7 Tage</p>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="height:250px;">
+    <canvas id="chart"></canvas>
+</div>
+
+<div class="card">
+    <input type="password" id="key" placeholder="Gemini API Key">
+    <button onclick="runAI()">KI Analyse</button>
+    <div id="ai"></div>
+</div>
+
+</div>
+
+<script>
+
+let runs = JSON.parse(localStorage.getItem("runs_v35_pro")) || [];
+let chart;
+
+document.getElementById("date").valueAsDate = new Date();
+
+// ---------------- SAVE
+function addRun() {
+
+    const d = document.getElementById("date").value;
+    const dist = parseFloat(document.getElementById("dist").value);
+    const time = parseFloat(document.getElementById("time").value);
+
+    if(!d || isNaN(dist) || isNaN(time)) return;
+
+    runs.push({ id:Date.now(), date:d, dist, time });
+
+    runs.sort((a,b)=> new Date(a.date)-new Date(b.date));
+
+    localStorage.setItem("runs_v35_pro", JSON.stringify(runs));
+
+    document.getElementById("dist").value = "";
+    document.getElementById("time").value = "";
+
+    update();
+}
+
+// ---------------- STATS SAFE
+function calc() {
+
+    const total = runs.reduce((a,b)=>a+(b.dist||0),0);
+    const avg = runs.length ? total / runs.length : 0;
+
+    const now = Date.now();
+    const weekMs = 7 * 86400000;
+
+    const week = runs
+        .filter(r => now - new Date(r.date).getTime() < weekMs)
+        .reduce((a,b)=>a+(b.dist||0),0);
+
+    return { total, avg, week };
+}
+
+// ---------------- UI
+function update() {
+    const c = calc();
+
+    total.innerText = c.total.toFixed(1);
+    avg.innerText = c.avg.toFixed(1);
+    week.innerText = c.week.toFixed(1);
+
+    draw();
+}
+
+// ---------------- CHART SAFE
+function draw() {
+
+    const ctx = document.getElementById("chart").getContext("2d");
+
+    if(chart) chart.destroy();
+
+    if(runs.length === 0) return;
+
+    chart = new Chart(ctx, {
+        type:"line",
+        data:{
+            labels:runs.map(r=>r.date),
+            datasets:[{
+                label:"km",
+                data:runs.map(r=>r.dist),
+                borderColor:"black",
+                tension:0.2
+            }]
+        },
+        options:{
+            responsive:true,
+            maintainAspectRatio:false
+        }
+    });
+}
+
+// ---------------- AI
+async function runAI() {
+
+    const key = document.getElementById("key").value.trim();
+    const ai = document.getElementById("ai");
+
+    if(!key) return alert("API Key fehlt");
+
+    const c = calc();
+
+    ai.innerText = "Analyse läuft...";
+
+    const prompt = `
+Du bist Laufcoach.
+
+Daten:
+- Gesamt: ${c.total.toFixed(1)} km
+- Ø: ${c.avg.toFixed(1)}
+- 7 Tage: ${c.week.toFixed(1)} km
+
+Gib:
+1. Analyse
+2. Empfehlung
+3. Risiko
+`;
+
+    try {
+        const res = await fetch(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + key,
+            {
+                method:"POST",
+                headers:{ "Content-Type":"application/json" },
+                body: JSON.stringify({
+                    contents:[{parts:[{text:prompt}]}]
+                })
+            }
+        );
+
+        const data = await res.json();
+
+        ai.innerText =
+            data.candidates?.[0]?.content?.parts?.[0]?.text ||
+            "Keine Antwort";
+
+    } catch(e) {
+        ai.innerText = "Fehler: " + e.message;
+    }
+}
+
+update();
+
+</script>
+
+<script>
+if("serviceWorker" in navigator){
+    navigator.serviceWorker.register("service-worker.js");
+}
+</script>
+
+</body>
+</html>
